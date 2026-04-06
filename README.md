@@ -117,19 +117,55 @@ Open **http://localhost:5173**
 
 ---
 
-## Deploy the frontend on Vercel
+## Connect Vercel to this GitHub repo
 
-**Important:** Vercel only hosts the **React (Vite) app**. It cannot run **FastAPI** or **Ollama**. You must run the API (+ Ollama) on a **VPS, home server, or a host like Railway/Fly.io/Render** with a **public HTTPS URL**, then point the UI at it.
+Only **you** can complete this in the browser (login + GitHub access). This repo is already set up with a root [`vercel.json`](vercel.json) so Vercel knows how to build the frontend.
 
-1. Push this repo to GitHub (or GitLab / Bitbucket).
-2. In [Vercel](https://vercel.com) → **Add New Project** → import the repo.  
-   The repo root `vercel.json` builds `frontend/` and publishes `frontend/dist`.
-3. **Environment variables** (Vercel → Project → Settings → Environment Variables):
-   - `VITE_API_URL` = your API base URL, **no trailing slash**, e.g. `https://api.yourdomain.com`  
-     (must expose `/api/health` and `/api/analyze` with **CORS** allowed for your Vercel domain; the backend already uses `allow_origins=["*"]`).
-4. Redeploy after adding env vars.
+**Important:** Vercel only hosts the **React (Vite) app**. It does **not** run **FastAPI** or **Ollama**. Host the API elsewhere (VPS, Railway, etc.), set `VITE_API_URL` to that **HTTPS** base URL.
 
-Local dev is unchanged: leave `VITE_API_URL` unset so requests use the Vite proxy to `localhost:8001`.
+### Step-by-step
+
+1. **Push the repo to GitHub** (if you have not already):
+   ```powershell
+   cd "c:\Prashant\Cursor\AI Use case finder"
+   git push -u origin main
+   ```
+
+2. Open **[vercel.com](https://vercel.com)** → sign up or log in → choose **Continue with GitHub** and authorize Vercel when GitHub asks.
+
+3. In the Vercel dashboard go to **[Add New… → Project](https://vercel.com/new)** (or **Import Project**).
+
+4. Under **Import Git Repository**, find your **`ai-use-case-finder`** (or whatever you named it) repo. If it is missing, click **Adjust GitHub App Permissions** / **Configure GitHub App** and grant access to that repository, then refresh the list.
+
+5. Click **Import** on the repo. Leave **Root Directory** as **`.`** (repository root) so Vercel uses the root `vercel.json`.
+
+6. Confirm build settings (usually filled from `vercel.json`):
+   - **Install Command:** `cd frontend && npm ci`
+   - **Build Command:** `cd frontend && npm run build`
+   - **Output Directory:** `frontend/dist`  
+   If the UI shows something different, override it to match the above.
+
+7. Expand **Environment Variables** and add (at least for **Production**):
+   - **Name:** `VITE_API_URL`  
+   - **Value:** your public API origin, **no trailing slash**, e.g. `https://api.yourdomain.com`  
+   Until the API is live, you can use a placeholder and redeploy later; the site will load but analysis will fail until `VITE_API_URL` is correct.
+
+8. Click **Deploy**. After it finishes, open the **`.vercel.app`** URL Vercel gives you.
+
+9. **Redeploy** after any change to env vars: **Project → Deployments → … on latest → Redeploy**.
+
+Local dev: do **not** set `VITE_API_URL` on your PC; the Vite dev server proxies `/api` to `localhost:8001`.
+
+### Optional: Vercel CLI (after browser login once)
+
+```powershell
+cd "c:\Prashant\Cursor\AI Use case finder"
+npx vercel login
+npx vercel link
+npx vercel --prod
+```
+
+`vercel link` attaches this folder to the Git-connected project so CLI deploys match the dashboard.
 
 ---
 
