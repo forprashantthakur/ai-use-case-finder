@@ -1,0 +1,8 @@
+{
+  "name": "ai-use-case-finder",
+  "private": true,
+  "description": "Monorepo root — Vercel builds the Vite app in frontend/",
+  "scripts": {
+    "build": "cd frontend && npm run build"
+  }
+}
