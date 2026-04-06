@@ -1,0 +1,169 @@
+import { useState, useCallback } from "react";
+import { apiUrl } from "../config";
+import type { AnalysisResult, AnalysisStatus } from "../types";
+
+export interface UseAnalysisReturn {
+  status: AnalysisStatus;
+  result: AnalysisResult | null;
+  streamText: string;
+  statusMessage: string;
+  error: string | null;
+  analyze: (industryName: string, industrySize: string, additionalContext?: string) => Promise<void>;
+  reset: () => void;
+}
+
+export function useAnalysis(): UseAnalysisReturn {
+  const [status, setStatus] = useState<AnalysisStatus>("idle");
+  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [streamText, setStreamText] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const reset = useCallback(() => {
+    setStatus("idle");
+    setResult(null);
+    setStreamText("");
+    setStatusMessage("");
+    setError(null);
+  }, []);
+
+  const analyze = useCallback(
+    async (industryName: string, industrySize: string, additionalContext = "") => {
+      setStatus("loading");
+      setResult(null);
+      setStreamText("");
+      setError(null);
+      setStatusMessage("Starting analysis...");
+
+      try {
+        const healthRes = await fetch(apiUrl("/api/health"));
+        if (!healthRes.ok) {
+          throw new Error(`Backend not reachable (${healthRes.status}). Is uvicorn running on port 8001?`);
+        }
+        const health = (await healthRes.json()) as {
+          llm?: string;
+          engine_version?: string;
+          ollama_reachable?: boolean;
+          ollama_models_installed?: number;
+          ollama_models?: string[];
+        };
+        if (health.llm !== "ollama") {
+          throw new Error(
+            "Wrong API on port 8001: this UI expects the Ollama backend (health must show \"llm\": \"ollama\"). " +
+              "Stop any old server (Ctrl+C), open a terminal in the project, then run:\n\n" +
+              '  cd "c:\\Prashant\\Cursor\\AI Use case finder\\backend"\n' +
+              "  .\\start-backend.ps1\n\n" +
+              "Or: uvicorn main:app --reload --port 8001\n\n" +
+              "Verify http://localhost:8001/api/health shows llm: ollama and engine_version: 2.1."
+          );
+        }
+        if (health.engine_version !== "2.1") {
+          throw new Error(
+            "This UI needs the latest backend (health must include engine_version: \"2.1\"). " +
+              "Restart uvicorn from the project backend folder on port 8001."
+          );
+        }
+        if (health.ollama_reachable && (health.ollama_models_installed ?? 0) === 0) {
+          throw new Error(
+            "Ollama is running but no models are installed.\n\n" +
+              "In PowerShell run:\n  ollama pull llama3.2\n\n" +
+              "Then confirm with:\n  ollama list"
+          );
+        }
+
+        const response = await fetch(apiUrl("/api/analyze"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            industry_name: industryName,
+            industry_size: industrySize,
+            additional_context: additionalContext,
+          }),
+        });
+
+        if (!response.ok) {
+          const errData = await response.json().catch(() => ({}));
+          throw new Error(errData.detail || `Server error: ${response.status}`);
+        }
+
+        if (!response.body) throw new Error("No response body");
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let doneReceived = false;
+
+        while (!doneReceived) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const data = line.slice(6).trim();
+            if (data === "[DONE]") {
+              doneReceived = true;
+              break;
+            }
+
+            let parsed: unknown;
+            try {
+              parsed = JSON.parse(data);
+            } catch (parseErr) {
+              // Skip malformed SSE chunks
+              continue;
+            }
+
+            if (typeof parsed !== "object" || parsed === null || !("type" in parsed)) {
+              continue;
+            }
+
+            const event = parsed as {
+              type: string;
+              message?: string;
+              content?: string;
+              data?: AnalysisResult;
+            };
+
+            if (event.type === "status") {
+              setStatusMessage(event.message ?? "");
+            } else if (event.type === "stream") {
+              setStreamText((prev: string) => prev + (event.content ?? ""));
+            } else if (event.type === "result") {
+              if (event.data) {
+                setResult(event.data);
+                setStatus("success");
+              } else {
+                throw new Error("Analysis completed but returned no data. Please try again.");
+              }
+            } else if (event.type === "error") {
+              throw new Error(event.message || "Analysis failed");
+            }
+          }
+        }
+        // If the stream ended but we never got a result, treat as error
+        setStatus((prev) => {
+          if (prev === "loading") {
+            setError("Analysis stream ended without delivering results. Please try again.");
+            return "error";
+          }
+          return prev;
+        });
+      } catch (err) {
+        let msg = err instanceof Error ? err.message : "An unexpected error occurred";
+        if (/claude|anthropic|not_found_error.*model/i.test(msg)) {
+          msg +=
+            "\n\nThis error comes from Anthropic (Claude), not Ollama. An old backend is still running — see the message above about restarting uvicorn from backend/.";
+        }
+        setError(msg);
+        setStatus("error");
+      }
+    },
+    []
+  );
+
+  return { status, result, streamText, statusMessage, error, analyze, reset };
+}
