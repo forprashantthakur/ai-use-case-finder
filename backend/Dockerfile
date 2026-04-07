@@ -12,4 +12,4 @@ COPY . .
 EXPOSE 8001
 
 # Shell form so $PORT from the host (e.g. Railway) is expanded at container start
-CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8001}"]
+CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
