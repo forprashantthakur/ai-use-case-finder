@@ -174,18 +174,22 @@ export function useAnalysis(): UseAnalysisReturn {
           const parts = [
             "The browser could not reach the API (offline server, wrong URL, CORS, or blocked mixed content).",
           ];
-          if (typeof window !== "undefined" && window.location.protocol === "https:") {
+          if (
+            typeof window !== "undefined" &&
+            window.location.protocol === "https:" &&
+            base.startsWith("http://")
+          ) {
             parts.push(
-              "Pages on https cannot call http:// APIs. Set VITE_API_URL to an https:// API origin in Vercel and redeploy."
+              "This page is https but VITE_API_URL is http:// — browsers block that. Use https:// for the API or remove VITE_API_URL and use Vercel BACKEND_PROXY_URL (see README)."
             );
           }
           if (!base) {
             parts.push(
-              "VITE_API_URL is not set in this build. In Vercel → Settings → Environment Variables, set it to your public API origin only (e.g. https://xxx.up.railway.app), then redeploy."
+              "Using same-origin /api (good for Vercel). Ensure BACKEND_PROXY_URL is set on Vercel and redeploy, or set VITE_API_URL to a working https API origin."
             );
           } else {
             parts.push(`This build uses API base: ${base}`);
-            parts.push(`Test in a new tab: ${base}/api/health — it should return JSON.`);
+            parts.push(`Test in a new tab: ${base}/api/health — it should return JSON. If NXDOMAIN or timeout, that hostname is wrong; fix Railway/Render URL.`);
           }
           msg = parts.join("\n\n");
         }

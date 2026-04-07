@@ -141,12 +141,17 @@ Only **you** can complete this in the browser (login + GitHub access). This repo
 
 6. **Framework / build:** If the project is in **Services** mode, build settings come from each service’s folder (`frontend/` uses [`frontend/vercel.json`](frontend/vercel.json)). If you instead use a **single** Vercel project, set **Root Directory** to **`frontend`**, clear Services overrides, and rely on `frontend/vercel.json` only.
 
-7. Expand **Environment Variables** and add (at least for **Production**):
-   - **Name:** `VITE_API_URL`  
-   - **Value:** the **public HTTPS origin of your API only** — no path, no `/api/health`.  
-     - Correct: `https://your-api.up.railway.app`  
-     - Wrong: `http://127.0.0.1:8001`, `https://…/api/health` (the app adds `/api/…` itself).  
-   Until the API is live, you can use a placeholder and redeploy later; the site will load but analysis will fail until `VITE_API_URL` is correct.
+7. Expand **Environment Variables** (Production). Use **one** of these patterns:
+
+   **A — Recommended if Railway’s public URL is flaky in the browser:** same-origin proxy  
+   - **`BACKEND_PROXY_URL`** = your API origin only, e.g. `https://xxx.up.railway.app` or `https://xxx.onrender.com` (copy from the host’s dashboard; **no** `/api` path).  
+   - **Delete** `VITE_API_URL` (or leave it unset) so the app calls **`/api/...` on your Vercel domain**. Vercel Edge middleware ([`frontend/middleware.ts`](frontend/middleware.ts)) forwards those requests to `BACKEND_PROXY_URL`.  
+   - Redeploy after saving.
+
+   **B — Direct API URL in the browser:**  
+   - **`VITE_API_URL`** = same HTTPS origin as above (no path, no `/api/health`).  
+   - Do **not** set `BACKEND_PROXY_URL` if you use this.  
+   - Wrong examples: `http://127.0.0.1:8001`, a hostname that shows **NXDOMAIN** in the browser, or `https://…/api/health`.
 
 8. Click **Deploy**. After it finishes, open the **`.vercel.app`** URL Vercel gives you.
 
