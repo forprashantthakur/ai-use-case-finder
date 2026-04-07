@@ -137,17 +137,15 @@ Only **you** can complete this in the browser (login + GitHub access). This repo
 
 4. Under **Import Git Repository**, find your **`ai-use-case-finder`** (or whatever you named it) repo. If it is missing, click **Adjust GitHub App Permissions** / **Configure GitHub App** and grant access to that repository, then refresh the list.
 
-5. Click **Import** on the repo. Leave **Root Directory** as **`.`** (repository root) so Vercel uses the root `vercel.json`.
+5. Click **Import** on the repo. Leave **Root Directory** as **`.`** (repository root). If Vercel shows **Services** and detects `backend` + `frontend`, the root [`vercel.json`](vercel.json) declares only the **Vite frontend** so you are not forced to deploy Python on Vercel.
 
-6. Confirm build settings (usually filled from `vercel.json`):
-   - **Install Command:** `cd frontend && npm ci`
-   - **Build Command:** `cd frontend && npm run build`
-   - **Output Directory:** `frontend/dist`  
-   If the UI shows something different, override it to match the above.
+6. **Framework / build:** If the project is in **Services** mode, build settings come from each service’s folder (`frontend/` uses [`frontend/vercel.json`](frontend/vercel.json)). If you instead use a **single** Vercel project, set **Root Directory** to **`frontend`**, clear Services overrides, and rely on `frontend/vercel.json` only.
 
 7. Expand **Environment Variables** and add (at least for **Production**):
    - **Name:** `VITE_API_URL`  
-   - **Value:** your public API origin, **no trailing slash**, e.g. `https://api.yourdomain.com`  
+   - **Value:** the **public HTTPS origin of your API only** — no path, no `/api/health`.  
+     - Correct: `https://your-api.up.railway.app`  
+     - Wrong: `http://127.0.0.1:8001`, `https://…/api/health` (the app adds `/api/…` itself).  
    Until the API is live, you can use a placeholder and redeploy later; the site will load but analysis will fail until `VITE_API_URL` is correct.
 
 8. Click **Deploy**. After it finishes, open the **`.vercel.app`** URL Vercel gives you.
