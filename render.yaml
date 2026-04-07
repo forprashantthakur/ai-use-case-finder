@@ -1,0 +1,12 @@
+# Optional: deploy API on Render if Railway public URL/DNS misbehaves.
+# Dashboard: https://dashboard.render.com → New → Blueprint → connect this repo.
+services:
+  - type: web
+    name: ai-use-case-finder-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: GROQ_API_KEY
+        sync: false

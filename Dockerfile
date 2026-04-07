@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/ .
 
-EXPOSE 8001
+EXPOSE 8000
 
 # Railway sets PORT; match it in Variables if Networking shows a specific port (e.g. 8080).
 CMD ["sh", "-c", "exec uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
