@@ -56,6 +56,7 @@ const DEFAULT_COLOR = {
 
 function ProcessNode({ data }: { data: { process: ProcessArea } }) {
   const { process } = data;
+  const subProcesses = process.subProcesses ?? [];
   const colors = CATEGORY_COLORS[process.category] ?? DEFAULT_COLOR;
 
   return (
@@ -86,17 +87,17 @@ function ProcessNode({ data }: { data: { process: ProcessArea } }) {
         <div className="w-1.5 h-1.5 rounded-full" style={{ background: colors.dot }} />
         <span>{process.department}</span>
       </div>
-      {process.subProcesses.length > 0 && (
+      {subProcesses.length > 0 && (
         <div className="mt-2 pt-2 border-t border-white/8">
-          {process.subProcesses.slice(0, 3).map((sp) => (
+          {subProcesses.slice(0, 3).map((sp) => (
             <div key={sp.id} className="text-xs text-slate-500 py-0.5 flex items-center gap-1.5">
               <div className="w-1 h-1 rounded-full bg-slate-600 flex-shrink-0" />
               <span className="truncate">{sp.name}</span>
             </div>
           ))}
-          {process.subProcesses.length > 3 && (
+          {subProcesses.length > 3 && (
             <div className="text-xs text-slate-600 mt-0.5">
-              +{process.subProcesses.length - 3} more
+              +{subProcesses.length - 3} more
             </div>
           )}
         </div>

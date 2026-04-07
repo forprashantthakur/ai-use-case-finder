@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { apiUrl } from "../config";
+import { normalizeAnalysisResult } from "../utils/normalizeAnalysis";
 import type { AnalysisResult, AnalysisStatus } from "../types";
 
 export interface UseAnalysisReturn {
@@ -44,6 +45,7 @@ export function useAnalysis(): UseAnalysisReturn {
           llm?: string;
           engine_version?: string;
           ollama_reachable?: boolean;
+          ollama_base_url?: string;
           ollama_models_installed?: number;
           ollama_models?: string[];
         };
@@ -61,6 +63,14 @@ export function useAnalysis(): UseAnalysisReturn {
           throw new Error(
             "This UI needs the latest backend (health must include engine_version: \"2.1\"). " +
               "Restart uvicorn from the project backend folder on port 8001."
+          );
+        }
+        if (health.ollama_reachable === false) {
+          const base = health.ollama_base_url ?? "http://127.0.0.1:11434";
+          throw new Error(
+            "Cannot reach Ollama. Open the Ollama app so it is running in the background, then run:\n\n" +
+              "  ollama pull llama3.2\n\n" +
+              `The API is using OLLAMA_BASE_URL=${base}. If Ollama runs elsewhere, set that in backend/.env and restart the API.`
           );
         }
         if (health.ollama_reachable && (health.ollama_models_installed ?? 0) === 0) {
@@ -92,6 +102,7 @@ export function useAnalysis(): UseAnalysisReturn {
         const decoder = new TextDecoder();
         let buffer = "";
         let doneReceived = false;
+        let streamDeliveredResult = false;
 
         while (!doneReceived) {
           const { done, value } = await reader.read();
@@ -134,7 +145,8 @@ export function useAnalysis(): UseAnalysisReturn {
               setStreamText((prev: string) => prev + (event.content ?? ""));
             } else if (event.type === "result") {
               if (event.data) {
-                setResult(event.data);
+                streamDeliveredResult = true;
+                setResult(normalizeAnalysisResult(event.data));
                 setStatus("success");
               } else {
                 throw new Error("Analysis completed but returned no data. Please try again.");
@@ -144,14 +156,16 @@ export function useAnalysis(): UseAnalysisReturn {
             }
           }
         }
-        // If the stream ended but we never got a result, treat as error
-        setStatus((prev) => {
-          if (prev === "loading") {
-            setError("Analysis stream ended without delivering results. Please try again.");
-            return "error";
-          }
-          return prev;
-        });
+        // Avoid clobbering success: React may not have flushed setStatus("success") yet, so use a flag
+        if (!streamDeliveredResult) {
+          setStatus((prev) => {
+            if (prev === "loading") {
+              setError("Analysis stream ended without delivering results. Please try again.");
+              return "error";
+            }
+            return prev;
+          });
+        }
       } catch (err) {
         let msg = err instanceof Error ? err.message : "An unexpected error occurred";
         if (/claude|anthropic|not_found_error.*model/i.test(msg)) {
