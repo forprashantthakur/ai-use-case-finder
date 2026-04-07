@@ -44,41 +44,40 @@ export function useAnalysis(): UseAnalysisReturn {
         const health = (await healthRes.json()) as {
           llm?: string;
           engine_version?: string;
-          ollama_reachable?: boolean;
+          ollama_reachable?: boolean | null;
           ollama_base_url?: string;
-          ollama_models_installed?: number;
+          ollama_models_installed?: number | null;
           ollama_models?: string[];
         };
-        if (health.llm !== "ollama") {
+        const llmOk = health.llm === "ollama" || health.llm === "openai";
+        if (!llmOk) {
           throw new Error(
-            "Wrong API on port 8001: this UI expects the Ollama backend (health must show \"llm\": \"ollama\"). " +
-              "Stop any old server (Ctrl+C), open a terminal in the project, then run:\n\n" +
-              '  cd "c:\\Prashant\\Cursor\\AI Use case finder\\backend"\n' +
-              "  .\\start-backend.ps1\n\n" +
-              "Or: uvicorn main:app --reload --port 8001\n\n" +
-              "Verify http://localhost:8001/api/health shows llm: ollama and engine_version: 2.1."
+            "This UI needs the AI Use Case Finder API (health must show \"llm\": \"ollama\" or \"openai\"). " +
+              "For local dev run the backend on port 8001, or set VITE_API_URL to your deployed API."
           );
         }
         if (health.engine_version !== "2.1") {
           throw new Error(
             "This UI needs the latest backend (health must include engine_version: \"2.1\"). " +
-              "Restart uvicorn from the project backend folder on port 8001."
+              "Restart the API server."
           );
         }
-        if (health.ollama_reachable === false) {
-          const base = health.ollama_base_url ?? "http://127.0.0.1:11434";
-          throw new Error(
-            "Cannot reach Ollama. Open the Ollama app so it is running in the background, then run:\n\n" +
-              "  ollama pull llama3.2\n\n" +
-              `The API is using OLLAMA_BASE_URL=${base}. If Ollama runs elsewhere, set that in backend/.env and restart the API.`
-          );
-        }
-        if (health.ollama_reachable && (health.ollama_models_installed ?? 0) === 0) {
-          throw new Error(
-            "Ollama is running but no models are installed.\n\n" +
-              "In PowerShell run:\n  ollama pull llama3.2\n\n" +
-              "Then confirm with:\n  ollama list"
-          );
+        if (health.llm === "ollama") {
+          if (health.ollama_reachable === false) {
+            const base = health.ollama_base_url ?? "http://127.0.0.1:11434";
+            throw new Error(
+              "Cannot reach Ollama. Open the Ollama app so it is running in the background, then run:\n\n" +
+                "  ollama pull llama3.2\n\n" +
+                `The API is using OLLAMA_BASE_URL=${base}. If Ollama runs elsewhere, set that in backend/.env and restart the API.`
+            );
+          }
+          if (health.ollama_reachable === true && (health.ollama_models_installed ?? 0) === 0) {
+            throw new Error(
+              "Ollama is running but no models are installed.\n\n" +
+                "In PowerShell run:\n  ollama pull llama3.2\n\n" +
+                "Then confirm with:\n  ollama list"
+            );
+          }
         }
 
         const response = await fetch(apiUrl("/api/analyze"), {

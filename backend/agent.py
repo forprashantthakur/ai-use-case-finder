@@ -148,6 +148,23 @@ def _ollama_num_predict() -> int:
         return 8192
 
 
+def active_llm_provider() -> str:
+    """Use OpenAI-compatible HTTP API when OPENAI_API_KEY is set; else Ollama."""
+    return "openai" if os.environ.get("OPENAI_API_KEY", "").strip() else "ollama"
+
+
+def _openai_base() -> str:
+    return os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+
+
+def _openai_model() -> str:
+    return os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip()
+
+
+def _openai_max_tokens() -> int:
+    return min(_ollama_num_predict(), 16384)
+
+
 def _model_base(name: str) -> str:
     return name.split(":", 1)[0].lower()
 
@@ -213,7 +230,168 @@ def _resolve_ollama_model(preferred: str, installed: list[str]) -> str | None:
 
 
 class AIUseCaseAgent:
-    """Runs analysis via Ollama (free, local open-weight models)."""
+    """Runs analysis via Ollama (local) or an OpenAI-compatible HTTP API (cloud)."""
+
+    async def _emit_parsed_result(self, full_response: str) -> AsyncGenerator[dict[str, Any], None]:
+        yield {"type": "status", "message": "Parsing results…"}
+
+        logger.info("Raw response length: %d chars", len(full_response))
+
+        cleaned = full_response.strip()
+        if cleaned.startswith("```json"):
+            cleaned = cleaned[7:]
+        if cleaned.startswith("```"):
+            cleaned = cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+
+        result = None
+        parse_error = ""
+
+        try:
+            result = json.loads(cleaned)
+            logger.info("JSON parsed successfully on first attempt")
+        except json.JSONDecodeError as e:
+            logger.warning("Direct JSON parse failed: %s — attempting repair", e)
+            parse_error = str(e)
+            result = self._repair_truncated_json(cleaned)
+            if result:
+                logger.info("JSON repair succeeded")
+            else:
+                logger.error("JSON repair also failed")
+
+        if result is None:
+            cloud_hint = (
+                "Try a stronger OPENAI_MODEL or increase OLLAMA_NUM_PREDICT / max output."
+                if active_llm_provider() == "openai"
+                else "Try a larger model (e.g. ollama pull qwen2.5:7b-instruct) or increase OLLAMA_NUM_PREDICT."
+            )
+            yield {
+                "type": "error",
+                "message": f"Could not parse model output as JSON. {parse_error} {cloud_hint}",
+            }
+            return
+
+        required_keys = ["industry", "processMap", "aiUseCases"]
+        missing = [k for k in required_keys if k not in result]
+        if missing:
+            logger.error("Result missing keys: %s", missing)
+            yield {
+                "type": "error",
+                "message": f"Analysis incomplete — missing sections: {', '.join(missing)}. Try again or use a stronger model.",
+            }
+            return
+
+        result.setdefault("executiveSummary", "")
+        result.setdefault("strategicRecommendations", [])
+        result.setdefault(
+            "aiMaturityRoadmap",
+            {
+                "currentState": "Not assessed",
+                "year1Goals": "To be defined",
+                "year2Goals": "To be defined",
+                "year3Vision": "To be defined",
+            },
+        )
+
+        logger.info(
+            "Delivering result: %d processes, %d use cases",
+            len(result.get("processMap", [])),
+            len(result.get("aiUseCases", [])),
+        )
+        yield {"type": "result", "data": result}
+
+    async def _analyze_via_openai(self, prompt: str, industry_name: str) -> AsyncGenerator[dict[str, Any], None]:
+        base = _openai_base()
+        key = os.environ.get("OPENAI_API_KEY", "").strip()
+        model = _openai_model()
+        max_tokens = _openai_max_tokens()
+        url = f"{base}/chat/completions"
+
+        yield {"type": "status", "message": f"Using cloud model for {industry_name}…"}
+
+        full_response = ""
+        try:
+            timeout = httpx.Timeout(600.0, connect=30.0)
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                headers: dict[str, str] = {
+                    "Authorization": f"Bearer {key}",
+                    "Content-Type": "application/json",
+                }
+                referer = os.environ.get("OPENROUTER_HTTP_REFERER", "").strip()
+                if referer:
+                    headers["HTTP-Referer"] = referer
+                app_name = os.environ.get("OPENROUTER_APP_NAME", "").strip()
+                if app_name:
+                    headers["X-Title"] = app_name
+
+                payload: dict[str, Any] = {
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "stream": True,
+                    "temperature": 0.4,
+                    "max_tokens": max_tokens,
+                }
+
+                async with client.stream("POST", url, headers=headers, json=payload) as response:
+                    if response.status_code >= 400:
+                        err_body = (await response.aread()).decode("utf-8", errors="replace")[:800]
+                        yield {
+                            "type": "error",
+                            "message": f"LLM API error ({response.status_code}): {err_body}",
+                        }
+                        return
+
+                    buf = ""
+                    stream_done = False
+                    async for text_chunk in response.aiter_text():
+                        if stream_done:
+                            break
+                        buf += text_chunk
+                        while "\n" in buf:
+                            line, buf = buf.split("\n", 1)
+                            line_stripped = line.strip()
+                            if not line_stripped.startswith("data:"):
+                                continue
+                            data = line_stripped[5:].strip()
+                            if data == "[DONE]":
+                                stream_done = True
+                                break
+                            try:
+                                obj = json.loads(data)
+                            except json.JSONDecodeError:
+                                continue
+                            err = obj.get("error")
+                            if err:
+                                msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
+                                yield {"type": "error", "message": f"LLM API: {msg}"}
+                                return
+                            for choice in obj.get("choices") or []:
+                                delta = choice.get("delta") or {}
+                                piece = delta.get("content") or ""
+                                if piece:
+                                    full_response += piece
+                                    yield {"type": "stream", "content": piece}
+                        if stream_done:
+                            break
+        except httpx.ConnectError:
+            logger.exception("OpenAI-compatible API connection failed")
+            yield {
+                "type": "error",
+                "message": f"Cannot reach LLM API at {base}. Check OPENAI_BASE_URL and network.",
+            }
+            return
+        except Exception as e:
+            logger.exception("OpenAI-compatible stream failed")
+            yield {"type": "error", "message": str(e)}
+            return
+
+        async for ev in self._emit_parsed_result(full_response):
+            yield ev
 
     async def analyze(
         self,
@@ -227,6 +405,11 @@ class AIUseCaseAgent:
             industry_size=industry_size,
             additional_context=f"Additional context from user: {additional_context}" if additional_context else ""
         )
+
+        if active_llm_provider() == "openai":
+            async for chunk in self._analyze_via_openai(prompt, industry_name):
+                yield chunk
+            return
 
         base = _ollama_base()
         preferred = _ollama_model()
@@ -346,69 +529,8 @@ class AIUseCaseAgent:
             yield {"type": "error", "message": str(e)}
             return
 
-        yield {"type": "status", "message": "Parsing results…"}
-
-        logger.info("Raw response length: %d chars", len(full_response))
-
-        cleaned = full_response.strip()
-        if cleaned.startswith("```json"):
-            cleaned = cleaned[7:]
-        if cleaned.startswith("```"):
-            cleaned = cleaned[3:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-        cleaned = cleaned.strip()
-
-        result = None
-        parse_error = ""
-
-        try:
-            result = json.loads(cleaned)
-            logger.info("JSON parsed successfully on first attempt")
-        except json.JSONDecodeError as e:
-            logger.warning("Direct JSON parse failed: %s — attempting repair", e)
-            parse_error = str(e)
-            result = self._repair_truncated_json(cleaned)
-            if result:
-                logger.info("JSON repair succeeded")
-            else:
-                logger.error("JSON repair also failed")
-
-        if result is None:
-            yield {
-                "type": "error",
-                "message": (
-                    f"Could not parse model output as JSON. {parse_error} "
-                    f"Try a larger model (e.g. ollama pull qwen2.5:7b-instruct) or increase OLLAMA_NUM_PREDICT."
-                ),
-            }
-            return
-
-        required_keys = ["industry", "processMap", "aiUseCases"]
-        missing = [k for k in required_keys if k not in result]
-        if missing:
-            logger.error("Result missing keys: %s", missing)
-            yield {
-                "type": "error",
-                "message": f"Analysis incomplete — missing sections: {', '.join(missing)}. Try again or use a stronger model.",
-            }
-            return
-
-        result.setdefault("executiveSummary", "")
-        result.setdefault("strategicRecommendations", [])
-        result.setdefault("aiMaturityRoadmap", {
-            "currentState": "Not assessed",
-            "year1Goals": "To be defined",
-            "year2Goals": "To be defined",
-            "year3Vision": "To be defined",
-        })
-
-        logger.info(
-            "Delivering result: %d processes, %d use cases",
-            len(result.get("processMap", [])),
-            len(result.get("aiUseCases", [])),
-        )
-        yield {"type": "result", "data": result}
+        async for ev in self._emit_parsed_result(full_response):
+            yield ev
 
     def _repair_truncated_json(self, text: str) -> dict | None:
         stack: list[str] = []

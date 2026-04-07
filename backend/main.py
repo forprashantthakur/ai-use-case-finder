@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from agent import AIUseCaseAgent, _ollama_base, _ollama_model
+from agent import AIUseCaseAgent, _ollama_base, _ollama_model, active_llm_provider, _openai_base, _openai_model
 from models import AnalysisRequest
 
 # Always resolve .env relative to this file so it works regardless of cwd
@@ -38,6 +38,19 @@ async def mark_ollama_backend(request, call_next):
 
 @app.get("/api/health")
 async def health():
+    provider = active_llm_provider()
+    if provider == "openai":
+        return {
+            "status": "healthy",
+            "llm": "openai",
+            "engine_version": "2.1",
+            "openai_base_url": _openai_base(),
+            "openai_model": _openai_model(),
+            "ollama_reachable": None,
+            "ollama_models_installed": None,
+            "ollama_models": [],
+        }
+
     base = _ollama_base()
     model = _ollama_model()
     ollama_ok = False
