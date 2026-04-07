@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { apiUrl } from "../config";
+import { apiUrl, getApiBase } from "../config";
 import { normalizeAnalysisResult } from "../utils/normalizeAnalysis";
 import type { AnalysisResult, AnalysisStatus } from "../types";
 
@@ -168,6 +168,28 @@ export function useAnalysis(): UseAnalysisReturn {
         }
       } catch (err) {
         let msg = err instanceof Error ? err.message : "An unexpected error occurred";
+        const isNetworkFail =
+          /failed to fetch|networkerror|load failed/i.test(msg) || err instanceof TypeError;
+        if (isNetworkFail) {
+          const base = getApiBase();
+          const parts = [
+            "The browser could not reach the API (offline server, wrong URL, CORS, or blocked mixed content).",
+          ];
+          if (typeof window !== "undefined" && window.location.protocol === "https:") {
+            parts.push(
+              "Pages on https cannot call http:// APIs. Set VITE_API_URL to an https:// API origin in Vercel and redeploy."
+            );
+          }
+          if (!base) {
+            parts.push(
+              "VITE_API_URL is not set in this build. In Vercel → Settings → Environment Variables, set it to your public API origin only (e.g. https://xxx.up.railway.app), then redeploy."
+            );
+          } else {
+            parts.push(`This build uses API base: ${base}`);
+            parts.push(`Test in a new tab: ${base}/api/health — it should return JSON.`);
+          }
+          msg = parts.join("\n\n");
+        }
         if (/claude|anthropic|not_found_error.*model/i.test(msg)) {
           msg +=
             "\n\nThis error comes from Anthropic (Claude), not Ollama. An old backend is still running — see the message above about restarting uvicorn from backend/.";
