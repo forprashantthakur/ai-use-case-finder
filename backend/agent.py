@@ -148,17 +148,34 @@ def _ollama_num_predict() -> int:
         return 8192
 
 
+def _cloud_llm_api_key() -> str:
+    """OPENAI_API_KEY takes precedence; else GROQ_API_KEY (same OpenAI-compatible client)."""
+    return os.environ.get("OPENAI_API_KEY", "").strip() or os.environ.get("GROQ_API_KEY", "").strip()
+
+
 def active_llm_provider() -> str:
-    """Use OpenAI-compatible HTTP API when OPENAI_API_KEY is set; else Ollama."""
-    return "openai" if os.environ.get("OPENAI_API_KEY", "").strip() else "ollama"
+    """OpenAI-compatible HTTP API when a cloud key is set; else Ollama."""
+    return "openai" if _cloud_llm_api_key() else "ollama"
 
 
 def _openai_base() -> str:
-    return os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+    raw = os.environ.get("OPENAI_BASE_URL", "").strip()
+    if raw:
+        return raw.rstrip("/")
+    if os.environ.get("OPENAI_API_KEY", "").strip():
+        return "https://api.openai.com/v1"
+    if os.environ.get("GROQ_API_KEY", "").strip():
+        return "https://api.groq.com/openai/v1"
+    return "https://api.openai.com/v1"
 
 
 def _openai_model() -> str:
-    return os.environ.get("OPENAI_MODEL", "gpt-4o-mini").strip()
+    raw = os.environ.get("OPENAI_MODEL", "").strip()
+    if raw:
+        return raw
+    if os.environ.get("GROQ_API_KEY", "").strip() and not os.environ.get("OPENAI_API_KEY", "").strip():
+        return "llama-3.3-70b-versatile"
+    return "gpt-4o-mini"
 
 
 def _openai_max_tokens() -> int:
@@ -304,7 +321,7 @@ class AIUseCaseAgent:
 
     async def _analyze_via_openai(self, prompt: str, industry_name: str) -> AsyncGenerator[dict[str, Any], None]:
         base = _openai_base()
-        key = os.environ.get("OPENAI_API_KEY", "").strip()
+        key = _cloud_llm_api_key()
         model = _openai_model()
         max_tokens = _openai_max_tokens()
         url = f"{base}/chat/completions"
