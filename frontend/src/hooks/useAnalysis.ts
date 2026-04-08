@@ -41,7 +41,15 @@ export function useAnalysis(): UseAnalysisReturn {
         if (!healthRes.ok) {
           throw new Error(`Backend not reachable (${healthRes.status}). Is uvicorn running on port 8001?`);
         }
-        const health = (await healthRes.json()) as {
+        const healthText = await healthRes.text();
+        const ct = healthRes.headers.get("content-type") || "";
+        if (ct.includes("text/html") || healthText.trimStart().toLowerCase().startsWith("<!")) {
+          throw new Error(
+            "Received HTML instead of JSON from /api/health (usually the Vite index.html). " +
+              "Redeploy with the latest vercel.json (SPA rewrite must not match /api/*), set BACKEND_PROXY_URL on Vercel, remove VITE_API_URL, and redeploy."
+          );
+        }
+        let health: {
           llm?: string;
           engine_version?: string;
           ollama_reachable?: boolean | null;
@@ -49,6 +57,18 @@ export function useAnalysis(): UseAnalysisReturn {
           ollama_models_installed?: number | null;
           ollama_models?: string[];
         };
+        try {
+          health = JSON.parse(healthText) as {
+            llm?: string;
+            engine_version?: string;
+            ollama_reachable?: boolean | null;
+            ollama_base_url?: string;
+            ollama_models_installed?: number | null;
+            ollama_models?: string[];
+          };
+        } catch {
+          throw new Error(`Invalid JSON from /api/health: ${healthText.slice(0, 160)}`);
+        }
         const llmOk = health.llm === "ollama" || health.llm === "openai";
         if (!llmOk) {
           throw new Error(
